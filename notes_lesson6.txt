@@ -1,0 +1,252 @@
+========cascade types, most important annotation========
+https://www.baeldung.com/spring-data-annotations
+https://docs.spring.io/spring-data/jpa/docs/current/reference/html/#transactions
+1. Cascade types:
+PERSIST
+MERGE
+REMOVE
+ALL
+
+--Cascade type PERSIST - malumotlar omboriga bitta obyektni childlari bilan bitta sovor orqali saqlash
+ imkonini beradi, misol uchun personni uning addresslari bilan bitta so'rov va bitta controller bilan
+ ham personni ham addressni saqlash mumkin:
+
+POST http://localhost:8080/api/person
+Content-Type: application/json
+
+{
+  "name": "Nodira",
+  "addresses": [
+    {
+      "street": "Navoiy"
+    },
+    {
+      "street": "Amir Temur"
+    }
+  ]
+}
+
+
+@Data@AllArgsConstructor@NoArgsConstructor
+@Entity
+public class Address {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long  id;
+    private String street;
+
+    @ManyToOne(optional = false, fetch = FetchType.LAZY) //fetchType.Lazy qachonki address tableda person chaqirilsagina uni olib keladi
+    private Person person;
+}
+
+@Data@AllArgsConstructor@NoArgsConstructor
+@Entity
+public class Person {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long  id;
+    private String name;
+
+    @OneToMany(mappedBy = "person", cascade = CascadeType.PERSIST)
+    //mappedBy-personda addresses fildi bo'lmaydi, u addressga personni map qiladi. Default holatda dastur 3ta jadval ochsa endi u 2ta jadval ochadi
+    //cascade type persist qoyadigan bo'lsak, personni saqlaganimizda addresslar listini ham jsonda bersak u avtomat address repositoryga ularni saqlaydi
+    private List<Address> addresses;
+}
+
+public class PersonDto {
+    private String name;
+    private List<Address> addresses;
+}
+
+@RestController
+@RequestMapping("api/person")
+public class PersonController {
+
+    @Autowired
+    private PersonRepository personRepository;
+
+    @PostMapping
+    public HttpEntity<?> addPerson(@RequestBody PersonDto personDto){
+        Person person = new Person();
+        person.setName(personDto.getName());
+        List<Address> addresses = new ArrayList<>();
+        personDto.getAddresses().forEach(address -> {
+            addresses.add(new Address(address.getStreet(), person));
+        });
+        person.setAddresses(addresses);
+        personRepository.save(person);
+        return ResponseEntity.ok("saved");
+    }
+}
+
+--huddi shunday cascade type MERGE obyektni (midolimizda addressni) update qilishda, 
+REMOVE (misolimizda personni o'chirmoqchi bo'lsak u o'chmaydi negaki u addressga bog'langan 
+agar cascade type REMOVE qiladigan bo'lsak u addressni ham personni ham o'chiradi) ochirishga
+ ALL esa barchasini bajarish mumkin bo'lgan vaqda 
+(cascadeType = {CascadeType.PERSIST, CascadeType.MERGE, CascadeType.REMOVE} bilan teng)) ishlatiladi
+
+========Most used annotation=========
+@OnDelete		//jpa.hybernite
+cascadeType.REMOVE bilan bir xil vazifani bajaradi
+faqat bor coulmnga qo'yiladi. mappedBy bilan birga kelmaydi
+
+@Data@AllArgsConstructor@NoArgsConstructor
+@Entity
+public class BankAccount {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long  id;
+
+    private String number;
+
+    @OnDelete(action = OnDeleteAction.CASCADE)  //cascadeType.REMOVE bilan bir xil vazifani bajaradi
+    @OneToOne (optional = false, fetch = FetchType.LAZY)
+    private Client client;
+}
+
+@Data@AllArgsConstructor@NoArgsConstructor
+@Entity
+public class Client {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long  id;
+    private String name;
+    @OneToOne(mappedBy = "client", cascade = CascadeType.PERSIST)
+    private BankAccount bankAccount;
+
+    public void setBankAccount(BankAccount bankAccount) {
+        bankAccount.setClient(this);
+        this.bankAccount = bankAccount;
+    }
+}
+
+POST http://localhost:8080/api/client
+Content-Type: application/json
+
+{
+  "name": "Nodira",
+  "bankAccount":
+    {
+      "number": "753951"
+    }
+}
+
+DELETE http://localhost:8080/api/client/2
+Content-Type: application/json
+--@Transactional
+agar method oxirgacha bajarilmasa (misol uchun exception tashisa) barcha db bila bo'lgan transactiyalarni orqaga qaytaradi.
+ @Transactional
+    @PostMapping
+    public HttpEntity<?> addPerson(@RequestBody PersonDto personDto){
+        Person person = new Person();
+        person.setName(personDto.getName());
+        List<Address> addresses = new ArrayList<>();
+        personDto.getAddresses().forEach(address -> {
+            addresses.add(new Address(address.getStreet(), person));
+        });
+        person.setAddresses(addresses);
+        personRepository.save(person);
+        throw new NullPointerException();
+//        return ResponseEntity.ok("saved");
+    }
+//metod yoki class ustiga qo'ysa bo'ladi
+
+@Transactional(dontRollbackOn = {NullPointerException.class, NegativeArraySizeException.class},
+    rollbackOn = EnumConstantNotPresentException.class)
+no roll back for - shu xatoliklar bajarilsa roll back qilmaydi
+roll back on - shu exceptionlar tashisa roll back qiladi
+
+--@Transient
+entity classda agar fieldni column qilib qo'shmoqchi bo'lmasak shu annotatsiyani qo'yishimiz mumkin
+
+@Data@AllArgsConstructor@NoArgsConstructor
+@Entity
+public class Person {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long  id;
+    private String name;
+    private LocalDate dateOfBirth;
+    @Transient
+    private int age;
+
+//person yoshini qaytaradi jsonda get qilganda
+    public int getYear() {
+        return Period.between(dateOfBirth, LocalDate.now()).getYears();
+    }
+}
+--@JsonIgnore
+jsondan shu field chqirilganda uni ignore qiladi. Misol uchun yuqoridagi person address proyektida
+ personni getAll qilsam u rekursiyaga tushib exception beradi. Agar Address Person fieldiga
+ @JsonIgnore annotatsiyasini qo'ysak bunday hatolik bo'lmaydi
+
+@Data@AllArgsConstructor@NoArgsConstructor
+@Entity
+public class Address {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long  id;
+    private String street;
+
+    @JsonIgnore
+    //rekursiyaga tushib qolishdan saqlaydi
+    @ManyToOne(optional = false, fetch = FetchType.LAZY) //fetchType.Lazy qachonki address tableda person chaqirilsagina uni olib keladi
+    private Person person;
+
+    public Address(String street, Person person) {
+        this.street = street;
+        this.person = person;
+    }
+}
+
+--@JsonIgnoreProperties(value = {"person", "street"})
+class ustiga qo'yiladi har bitta fieldni ustiga qoyish bilan bir xil
+
+@Data@AllArgsConstructor@NoArgsConstructor
+@Entity
+@JsonIgnoreProperties(value = {"person", "street"})
+public class Address {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long  id;
+    private String street;
+
+//    @JsonIgnore
+    //rekursiyaga tushib qolishdan saqlaydi
+    @ManyToOne(optional = false, fetch = FetchType.LAZY) //fetchType.Lazy qachonki address tableda person chaqirilsagina uni olib keladi
+    private Person person;
+
+    public Address(String street, Person person) {
+        this.street = street;
+        this.person = person;
+    }
+}
+
+
+--@OrderBy list fieldini sort qberadi
+@OrderBy(value = "street asc")
+    private List<Address> addresses;
+
+--@Where(clause = "date_of_birth is not null")
+public class Person 
+//entity class ustiga qoyiladi va shu table select qilinganda where clauseni qo'shib yuboradi
+ bu yerda tug kuni null bo'lmaganini tashidi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
